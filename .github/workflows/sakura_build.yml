@@ -1,0 +1,65 @@
+name: Build Armbian for Sakura Pi RK3308B (Ubuntu 22)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "镜像类型 (minimal/desktop)"
+        default: "minimal"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6小时超时
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: 安装依赖
+      run: |
+        sudo apt-get update
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          git pkg-config debhelper devscripts libarchive-tools lsb-release \
+          build-essential gcc make bc sox gawk binutils libc6-dev libssl-dev \
+          bison flex fakeroot kmod cpio u-boot-tools device-tree-compiler \
+          binman
+
+    - name: 配置国内镜像源 (可选)
+      run: |
+        echo "DOWNLOAD_MIRROR=china" >> build/userpatches/config-default.conf
+        sudo sed -i 's|http://ports.ubuntu.com|https://mirrors.tuna.tsinghua.edu.cn|g' build/config/sources/apt-archive-ubuntu.sources
+
+    - name: 编译 Armbian
+      env:
+        BUILD_TYPE: ${{ github.event.inputs.build_type }}
+      run: |
+        cd build
+        
+        # 根据配置文件设置参数
+        if [ "$BUILD_TYPE" = "desktop" ]; then
+          BUILD_DESKTOP="yes"
+          BUILD_MINIMAL="no"
+        else
+          BUILD_DESKTOP="no"
+          BUILD_MINIMAL="yes"
+        fi
+
+        ./compile.sh \
+          BOARD="sakurapi-rk3308b" \  # 匹配配置文件名称
+          BRANCH="current" \           # 配置文件指定 KERNEL_TARGET="current"
+          RELEASE=jammy \              # Ubuntu 22.04
+          BUILD_MINIMAL="$BUILD_MINIMAL" \
+          BUILD_DESKTOP="$BUILD_DESKTOP" \
+          KERNEL_CONFIGURE=no \        # 使用默认配置
+          BOOTBRANCH="tag:v2025.04" \  # 匹配配置文件中的 BOOTBRANCH_BOARD
+          BOOTPATCHDIR="v2025.04" \    # 匹配配置文件
+          CLEAN_LEVEL="make,debs"
+
+    - name: 上传镜像
+      uses: actions/upload-artifact@v3
+      with:
+        name: sakurapi-rk3308b-ubuntu22-${{ github.event.inputs.build_type }}
+        path: build/output/images/*.img
